@@ -1,0 +1,39 @@
+{
+  "session_id": "c9cb9ac4-2927-4d61-8df8-4a009c0423ff",
+  "ticket_id": "MED-20260523-505D04B5",
+  "initiated_at": "2026-05-23T21:54:45.948807+00:00",
+  "channel": "telegram",
+  "chat_id": "000",
+  "user_mode": "patient",
+  "raw_message": "I have been having headache and fever for 3 days, I feel very weak",
+  "symptoms": [
+    "I have been having headache",
+    "fever for 3 days",
+    "I feel very weak"
+  ],
+  "duration": "3 day",
+  "age": null,
+  "medications": [],
+  "status": "acknowledged",
+  "errors": [],
+  "raw_research": null,
+  "research_chunks": null,
+  "pinecone_ids": null,
+  "retrieved_chunks": null,
+  "reranked_chunks": null,
+  "urgency_level": null,
+  "urgency_score": null,
+  "differential": null,
+  "red_flags": [],
+  "retry_count": 0,
+  "triage_report": null,
+  "nutrition_advice": null,
+  "home_remedies": null,
+  "follow_up_sent": false,
+  "report_ready": false,
+  "workflow_path": [
+    "validate_input",
+    "parse_input",
+    "acknowledge"
+  ]
+}
