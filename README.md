@@ -26,6 +26,11 @@ It is designed for:
 ## Main File
 - [medical_agent_server.py](./medical_agent_server.py)
 
+## n8n Workflow
+- [n8n/medical_triage_intake.json](./n8n/medical_triage_intake.json)
+
+Import this workflow into n8n to receive a triage request, normalize the payload, call the FastAPI service, and return the structured triage response.
+
 ## Run the Server
 Create and activate a virtual environment if you do not already have one:
 ```bash
@@ -96,9 +101,16 @@ Optional:
 
 ## Project Structure
 - `medical_agent_server.py` - API server and workflow
+- `n8n/medical_triage_intake.json` - n8n intake workflow export
 - `AGENTS_medical.md` - workflow and agent design notes
 - `sprint1_medical.ipynb` to `sprint5_medical.ipynb` - sprint notebooks
 - `sprint*_medical_output.json` - output artifacts
+
+## n8n Setup
+1. Start the FastAPI server locally.
+2. Set `TRIAGE_API_URL` in n8n if needed.
+3. Import `n8n/medical_triage_intake.json`.
+4. Activate the workflow and send a POST request to the webhook path.
 
 ## Notes
 - Emergency symptoms bypass the standard pipeline.

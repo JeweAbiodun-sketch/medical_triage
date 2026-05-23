@@ -1,0 +1,122 @@
+{
+  "name": "Medical Triage Intake",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "medical-triage",
+        "responseMode": "responseNode",
+        "options": {}
+      },
+      "id": "8f2a1b2c-4a5d-4e6f-9a71-100000000001",
+      "name": "Webhook Trigger",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        260,
+        300
+      ],
+      "webhookId": "medical-triage-intake-webhook"
+    },
+    {
+      "parameters": {
+        "jsCode": "const body = $json.body ?? $json;\nconst chatId = body.chat_id ?? body.chatId ?? body.from?.id ?? '';\nconst message = (body.message ?? body.text ?? body.caption ?? '').toString().trim();\n\nreturn [\n  {\n    json: {\n      message,\n      channel: (body.channel ?? 'telegram').toString(),\n      chat_id: chatId ? chatId.toString() : '',\n      phone_number: body.phone_number ?? body.phoneNumber ?? null,\n      preferred_language: body.preferred_language ?? body.preferredLanguage ?? null,\n      facility_location: body.facility_location ?? body.facilityLocation ?? null,\n      offline_mode: Boolean(body.offline_mode ?? body.offlineMode ?? false)\n    }\n  }\n];"
+      },
+      "id": "8f2a1b2c-4a5d-4e6f-9a71-100000000002",
+      "name": "Normalize Request",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        520,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ $env.TRIAGE_API_URL || 'http://host.docker.internal:8001/triage' }}",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 300000
+        }
+      },
+      "id": "8f2a1b2c-4a5d-4e6f-9a71-100000000003",
+      "name": "Call FastAPI",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        800,
+        300
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json }}",
+        "options": {}
+      },
+      "id": "8f2a1b2c-4a5d-4e6f-9a71-100000000004",
+      "name": "Return Response",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1080,
+        300
+      ]
+    }
+  ],
+  "connections": {
+    "Webhook Trigger": {
+      "main": [
+        [
+          {
+            "node": "Normalize Request",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Normalize Request": {
+      "main": [
+        [
+          {
+            "node": "Call FastAPI",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Call FastAPI": {
+      "main": [
+        [
+          {
+            "node": "Return Response",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "staticData": null,
+  "pinData": {},
+  "versionId": "1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": [
+    {
+      "name": "medical"
+    },
+    {
+      "name": "nigeria"
+    }
+  ]
+}
