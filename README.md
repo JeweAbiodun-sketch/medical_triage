@@ -2,6 +2,9 @@
 
 Autonomous triage assistant for Nigerian healthcare workflows.
 
+## Repository
+- GitHub: [JeweAbiodun-sketch/medical_triage](https://github.com/JeweAbiodun-sketch/medical_triage)
+
 ## Overview
 This project combines symptom parsing, emergency screening, clinical research retrieval, urgency classification, and report generation into one FastAPI service.
 
@@ -24,6 +27,11 @@ It is designed for:
 - [medical_agent_server.py](./medical_agent_server.py)
 
 ## Run the Server
+Create and activate a virtual environment if you do not already have one:
+```bash
+python -m venv .venv
+```
+
 Install dependencies first:
 ```bash
 pip install -r requirements.txt
