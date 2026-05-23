@@ -112,6 +112,18 @@ Optional:
 3. Import `n8n/medical_triage_intake.json`.
 4. Activate the workflow and send a POST request to the webhook path.
 
+## Render Deployment
+Live API base URL:
+- `https://medical-triage-j8fm.onrender.com`
+
+Use this in n8n as:
+- `https://medical-triage-j8fm.onrender.com/triage`
+
+If you want to override the default in n8n, set:
+```bash
+TRIAGE_API_URL=https://medical-triage-j8fm.onrender.com/triage
+```
+
 ## Notes
 - Emergency symptoms bypass the standard pipeline.
 - The SMS layer depends on an external provider.

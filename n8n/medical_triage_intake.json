@@ -34,7 +34,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "={{ $env.TRIAGE_API_URL || 'http://host.docker.internal:8001/triage' }}",
+        "url": "={{ $env.TRIAGE_API_URL || 'https://medical-triage-j8fm.onrender.com/triage' }}",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={{ $json }}",
