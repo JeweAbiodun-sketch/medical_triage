@@ -105,17 +105,110 @@
     },
     {
       "parameters": {
-        "respondWith": "json",
-        "responseBody": "={{ $json }}",
-        "options": {}
+        "jsCode": "const r = $json;\nconst mode = String(r.user_mode ?? 'patient');\nconst urgency = String(r.urgency_level ?? 'standard').toLowerCase();\nconst score = r.urgency_score ?? '?';\nconst ticket = r.ticket_id ?? 'N/A';\nconst report = r.triage_report ?? {};\nconst diff = Array.isArray(r.differential) && r.differential.length ? r.differential.slice(0, 3).join(', ') : 'Not available';\nconst actionMap = {\n  emergency: 'Go to A&E immediately. Call 112 now.',\n  urgent: 'See a doctor within 24 hours.',\n  standard: 'Book a clinic appointment this week.',\n  'self-care': 'Manage at home with the guidance below.'\n};\n\nconst summary = [\n  'TRIAGE COMPLETE',\n  '',\n  `Ref: ${ticket}`,\n  `Urgency: ${urgency.toUpperCase()} (${score}/10)`,\n  `Likely causes: ${diff}`,\n  `ACTION: ${actionMap[urgency] || 'See a doctor.'}`,\n  '',\n  'DISCLAIMER: This is not a substitute for professional medical advice.'\n].join('\\n');\n\nconst reportText = mode === 'clinician'\n  ? String(report.clinician_report ?? report.patient_report ?? 'Report unavailable')\n  : String(report.patient_report ?? report.emergency_response ?? 'Report unavailable');\n\nconst nutrition = urgency === 'self-care' && r.nutrition_advice\n  ? `\\n\\nNIGERIAN NUTRITION ADVICE:\\n${r.nutrition_advice}`\n  : '';\n\nconst progress = urgency === 'self-care'\n  ? '\\n\\nPROGRESS CHECK: You will receive a check-in message in 24 hours.'\n  : '';\n\nconst disclaimer = '\\n\\nDISCLAIMER: This is not a substitute for professional medical advice. Always consult a qualified healthcare provider.';\nconst shouldSendTelegram = Boolean(r.chat_id) && String(r.channel ?? 'telegram').toLowerCase() === 'telegram';\n\nreturn [{\n  json: {\n    chat_id: r.chat_id ?? '',\n    summary,\n    report_text: `${reportText}${nutrition}${progress}${disclaimer}`,\n    should_send_telegram: shouldSendTelegram,\n    ticket_id: ticket,\n    urgency_level: urgency,\n    response_status: r.status ?? 'complete'\n  }\n}];"
       },
-      "id": "b1c9f9a1-0006-4c3a-9f0b-000000000006",
-      "name": "Return Success",
-      "type": "n8n-nodes-base.respondToWebhook",
-      "typeVersion": 1,
+      "id": "b1c9f9a1-0007-4c3a-9f0b-000000000007",
+      "name": "Prepare Delivery",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
       "position": [
         1280,
         220
+      ]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "conditions": [
+            {
+              "id": "b1c9f9a1-0008-a",
+              "leftValue": "={{ $json.should_send_telegram }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true"
+              }
+            }
+          ]
+        }
+      },
+      "id": "b1c9f9a1-0008-4c3a-9f0b-000000000008",
+      "name": "Send Telegram?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2,
+      "position": [
+        1520,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.summary } }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b1c9f9a1-0009-4c3a-9f0b-000000000009",
+      "name": "Telegram Summary",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1760,
+        120
+      ]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.report_text } }}",
+        "options": {
+          "timeout": 30000
+        }
+      },
+      "id": "b1c9f9a1-0010-4c3a-9f0b-000000000010",
+      "name": "Telegram Full Report",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [
+        1760,
+        320
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, status: $('Prepare Delivery').item.json.response_status || 'complete', ticket_id: $('Prepare Delivery').item.json.ticket_id, urgency_level: $('Prepare Delivery').item.json.urgency_level, message: 'Triage request received and processed.' } }}",
+        "options": {}
+      },
+      "id": "b1c9f9a1-0011-4c3a-9f0b-000000000011",
+      "name": "Return Telegram Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        2000,
+        220
+      ]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ { ok: true, status: $json.response_status || 'complete', ticket_id: $json.ticket_id, urgency_level: $json.urgency_level, message: 'Triage request received and processed.' } }}",
+        "options": {}
+      },
+      "id": "b1c9f9a1-0012-4c3a-9f0b-000000000012",
+      "name": "Return API Result",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1,
+      "position": [
+        1760,
+        520
       ]
     }
   ],
@@ -164,7 +257,58 @@
       "main": [
         [
           {
-            "node": "Return Success",
+            "node": "Prepare Delivery",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Prepare Delivery": {
+      "main": [
+        [
+          {
+            "node": "Send Telegram?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Send Telegram?": {
+      "main": [
+        [
+          {
+            "node": "Telegram Summary",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Return API Result",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Summary": {
+      "main": [
+        [
+          {
+            "node": "Telegram Full Report",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Telegram Full Report": {
+      "main": [
+        [
+          {
+            "node": "Return Telegram Result",
             "type": "main",
             "index": 0
           }
