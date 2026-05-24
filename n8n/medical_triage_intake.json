@@ -129,7 +129,10 @@
                 "operation": "true"
               }
             }
-          ]
+          ],
+          "options": {
+            "convertTypes": true
+          }
         }
       },
       "id": "b1c9f9a1-0008-4c3a-9f0b-000000000008",
@@ -143,19 +146,16 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.summary } }}",
-        "options": {
-          "timeout": 30000
-        }
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.summary }}",
+        "additionalFields": {}
       },
       "id": "b1c9f9a1-0009-4c3a-9f0b-000000000009",
       "name": "Telegram Summary",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         1760,
         120
@@ -163,19 +163,16 @@
     },
     {
       "parameters": {
-        "method": "POST",
-        "url": "=https://api.telegram.org/bot{{$env.TELEGRAM_BOT_TOKEN}}/sendMessage",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ { chat_id: $json.chat_id, text: $json.report_text } }}",
-        "options": {
-          "timeout": 30000
-        }
+        "resource": "message",
+        "operation": "sendMessage",
+        "chatId": "={{ $json.chat_id }}",
+        "text": "={{ $json.report_text }}",
+        "additionalFields": {}
       },
       "id": "b1c9f9a1-0010-4c3a-9f0b-000000000010",
       "name": "Telegram Full Report",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
+      "type": "n8n-nodes-base.telegram",
+      "typeVersion": 1.2,
       "position": [
         1760,
         320
