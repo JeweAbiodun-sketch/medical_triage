@@ -47,8 +47,17 @@ Then start the server:
 python medical_agent_server.py
 ```
 
-The service starts on:
-- `http://localhost:8001`
+Default local port:
+- `8001`
+
+If that port is already in use, set a different one before starting:
+```bash
+PORT=8002 python medical_agent_server.py
+```
+
+The service will then start on:
+- `http://localhost:8001` by default
+- `http://localhost:<PORT>` when `PORT` is set
 
 Helpful endpoints:
 - `GET /health`
@@ -112,9 +121,31 @@ Optional:
 3. Import `n8n/medical_triage_intake.json`.
 4. Activate the workflow and send a POST request to the webhook path.
 
+## Testing Helper
+Use `testing.py` to smoke-test either endpoint:
+
+Test the n8n webhook:
+```bash
+python testing.py n8n
+```
+
+Test the Render API:
+```bash
+python testing.py render
+```
+
+Optional `.env` values:
+```bash
+N8N_WEBHOOK_URL=https://adetu-o.n8n.irn.hk/webhook/medical-triage
+TRIAGE_API_URL=https://medical-triage-j8fm.onrender.com/triage
+TEST_TARGET=n8n
+```
+
 ## Render Deployment
 Live API base URL:
 - `https://medical-triage-j8fm.onrender.com`
+
+Render sets `PORT` automatically, and `medical_agent_server.py` now reads it.
 
 Use this in n8n as:
 - `https://medical-triage-j8fm.onrender.com/triage`

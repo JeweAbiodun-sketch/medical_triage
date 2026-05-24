@@ -1081,10 +1081,11 @@ def run_triage(request: TriageRequest):
 
 
 if __name__ == "__main__":
+    port = int(os.getenv("PORT", "8001"))
     print("\n" + "="*55)
     print("  🏥 Medical Triage Agent Server")
-    print("  URL   : http://localhost:8001")
-    print("  Docs  : http://localhost:8001/docs")
-    print("  Health: http://localhost:8001/health")
+    print(f"  URL   : http://localhost:{port}")
+    print(f"  Docs  : http://localhost:{port}/docs")
+    print(f"  Health: http://localhost:{port}/health")
     print("="*55 + "\n")
-    uvicorn.run(app, host="0.0.0.0", port=8001, reload=False)
+    uvicorn.run(app, host="0.0.0.0", port=port, reload=False)
