@@ -10,6 +10,7 @@ This project combines symptom parsing, emergency screening, clinical research re
 
 It is designed for:
 - Patients who need plain-language triage guidance
+- Patients who need an interactive chatbot that asks follow-up questions
 - Clinicians who need structured clinical support
 - Nigerian healthcare contexts, including local conditions, emergency contacts, and facility suggestions
 
@@ -22,6 +23,7 @@ It is designed for:
 - Urgency classification system
 - Emergency red-flag fast track
 - Telegram delivery support
+- LLM-driven chatbot intake with per-chat memory and a triage tool handoff
 
 ## Main File
 - [medical_agent_server.py](./medical_agent_server.py)
@@ -31,7 +33,7 @@ It is designed for:
 - [n8n/telegram_chatbot_intake.json](./n8n/telegram_chatbot_intake.json)
 
 Import this workflow into n8n to receive a triage request, normalize the payload, call the FastAPI service, and return the structured triage response.
-Use the Telegram workflow for interactive intake that collects symptoms step by step before calling the triage API.
+Use the Telegram workflow for interactive intake that forwards Telegram messages to the chatbot endpoint, keeps memory in the backend, and calls the triage pipeline when the model decides it has enough information.
 
 ## Run the Server
 Create and activate a virtual environment if you do not already have one:
@@ -64,12 +66,20 @@ The service will then start on:
 Helpful endpoints:
 - `GET /health`
 - `POST /triage`
+- `POST /chatbot/telegram`
 
 ## Example Request
 ```bash
 curl -X POST http://localhost:8001/triage ^
   -H "Content-Type: application/json" ^
   -d "{\"message\":\"I have fever and headache for 3 days\",\"channel\":\"telegram\",\"chat_id\":\"8138298582\"}"
+```
+
+## Chatbot Request
+```bash
+curl -X POST http://localhost:8001/chatbot/telegram ^
+  -H "Content-Type: application/json" ^
+  -d "{\"message\":\"I have fever and headache for 3 days\",\"channel\":\"telegram\",\"chat_id\":\"8138298582\",\"user_name\":\"Abiodun\"}"
 ```
 
 ## Request Body
@@ -121,7 +131,8 @@ Optional:
 1. Start the FastAPI server locally.
 2. Set `TRIAGE_API_URL` in n8n if needed.
 3. Import `n8n/medical_triage_intake.json` for webhook intake or `n8n/telegram_chatbot_intake.json` for the interactive chatbot.
-4. Activate the workflow and send a POST request or Telegram message depending on the workflow you imported.
+4. The Telegram chatbot workflow now calls `POST /chatbot/telegram` on the backend, which keeps memory and decides when to hand off to `/triage`.
+5. Activate the workflow and send a Telegram message to your bot.
 
 ## Testing Helper
 Use `testing.py` to smoke-test either endpoint:
@@ -136,10 +147,16 @@ Test the Render API:
 python testing.py render
 ```
 
+Test the chatbot endpoint directly:
+```bash
+python testing.py chatbot
+```
+
 Optional `.env` values:
 ```bash
 N8N_WEBHOOK_URL=https://adetu-o.n8n.irn.hk/webhook/medical-triage
 TRIAGE_API_URL=https://medical-triage-j8fm.onrender.com/triage
+CHATBOT_API_URL=https://medical-triage-j8fm.onrender.com/chatbot/telegram
 TEST_TARGET=n8n
 ```
 

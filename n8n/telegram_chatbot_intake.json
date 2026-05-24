@@ -1,12 +1,14 @@
 {
-  "name": "Medical Triage Telegram Chatbot",
+  "name": "Medical Triage Telegram LLM Chatbot",
   "nodes": [
     {
       "parameters": {
-        "updates": ["message"],
+        "updates": [
+          "message"
+        ],
         "additionalFields": {}
       },
-      "id": "d1f4c7a1-0001-4c3a-9f0b-000000000001",
+      "id": "telegram-trigger",
       "name": "Telegram Trigger",
       "type": "n8n-nodes-base.telegramTrigger",
       "typeVersion": 1.1,
@@ -17,10 +19,10 @@
     },
     {
       "parameters": {
-        "jsCode": "const staticData = this.getWorkflowStaticData('global');\nstaticData.sessions = staticData.sessions || {};\nstaticData.completedIntakes = staticData.completedIntakes || [];\n\nconst tgMessage = $json.message ?? $json.edited_message ?? $json;\nconst chatId = String(tgMessage?.chat?.id ?? tgMessage?.from?.id ?? '').trim();\nconst text = String(tgMessage?.text ?? tgMessage?.caption ?? '').trim();\nconst lower = text.toLowerCase();\nconst firstName = String(tgMessage?.from?.first_name ?? '').trim();\nconst languageCode = String(tgMessage?.from?.language_code ?? '').trim() || null;\n\nconst prompts = [\n  'What symptoms are you having?',\n  'How long has this been happening?',\n  'How severe is it from 1 to 10?',\n  'What is your age?',\n  'Any red flags like chest pain, trouble breathing, seizure, vomiting blood, or severe bleeding?',\n  'What city or area are you in?'\n];\n\nif (!chatId) {\n  return [{\n    json: {\n      action: 'ignore',\n      chat_id: '',\n      channel: 'telegram',\n      reply_text: 'I could not read your chat ID. Please send the message again from Telegram.'\n    }\n  }];\n}\n\nif (lower === '/cancel') {\n  delete staticData.sessions[chatId];\n  return [{\n    json: {\n      action: 'prompt',\n      chat_id: chatId,\n      channel: 'telegram',\n      reply_text: 'Your triage intake has been cancelled. Send /start to begin again.'\n    }\n  }];\n}\n\nlet session = staticData.sessions[chatId] || {\n  step: 0,\n  data: {\n    user_name: firstName || null,\n    preferred_language: languageCode,\n    channel: 'telegram'\n  }\n};\n\nconst saveSession = () => {\n  staticData.sessions[chatId] = session;\n};\n\nif (lower === '/start' || lower === 'start') {\n  session = {\n    step: 0,\n    data: {\n      user_name: firstName || null,\n      preferred_language: languageCode,\n      channel: 'telegram'\n    }\n  };\n  saveSession();\n  return [{\n    json: {\n      action: 'prompt',\n      chat_id: chatId,\n      channel: 'telegram',\n      reply_text: 'Welcome. What symptoms are you having?'\n    }\n  }];\n}\n\nif (!text) {\n  saveSession();\n  return [{\n    json: {\n      action: 'prompt',\n      chat_id: chatId,\n      channel: 'telegram',\n      reply_text: prompts[session.step] || prompts[0]\n    }\n  }];\n}\n\nswitch (session.step) {\n  case 0:\n    session.data.symptoms = text;\n    session.step = 1;\n    saveSession();\n    return [{ json: { action: 'prompt', chat_id: chatId, channel: 'telegram', reply_text: prompts[1], intake: session.data } }];\n  case 1:\n    session.data.duration = text;\n    session.step = 2;\n    saveSession();\n    return [{ json: { action: 'prompt', chat_id: chatId, channel: 'telegram', reply_text: prompts[2], intake: session.data } }];\n  case 2:\n    session.data.severity = text;\n    session.step = 3;\n    saveSession();\n    return [{ json: { action: 'prompt', chat_id: chatId, channel: 'telegram', reply_text: prompts[3], intake: session.data } }];\n  case 3:\n    session.data.age = text;\n    session.step = 4;\n    saveSession();\n    return [{ json: { action: 'prompt', chat_id: chatId, channel: 'telegram', reply_text: prompts[4], intake: session.data } }];\n  case 4:\n    session.data.red_flags = text;\n    session.step = 5;\n    saveSession();\n    return [{ json: { action: 'prompt', chat_id: chatId, channel: 'telegram', reply_text: prompts[5], intake: session.data } }];\n  case 5: {\n    session.data.location = text;\n    const intake = {\n      ...session.data,\n      location: text,\n      chat_id: chatId,\n      channel: 'telegram',\n      collected_at: new Date().toISOString()\n    };\n    staticData.completedIntakes.push(intake);\n    if (staticData.completedIntakes.length > 100) staticData.completedIntakes.shift();\n    delete staticData.sessions[chatId];\n\n    const triageMessage = [\n      `Symptoms: ${intake.symptoms}`,\n      `Duration: ${intake.duration}`,\n      `Severity: ${intake.severity}`,\n      `Age: ${intake.age}`,\n      `Red flags: ${intake.red_flags}`,\n      `Location: ${intake.location}`,\n      `Language: ${intake.preferred_language || 'unknown'}`\n    ].join('\\n');\n\n    return [{\n      json: {\n        action: 'finalize',\n        chat_id: chatId,\n        channel: 'telegram',\n        reply_text: 'Thanks. I am processing your triage now.',\n        triage_payload: {\n          message: triageMessage,\n          channel: 'telegram',\n          chat_id: chatId,\n          phone_number: null,\n          preferred_language: intake.preferred_language,\n          facility_location: intake.location,\n          offline_mode: false\n        },\n        intake\n      }\n    }];\n  }\n  default:\n    session.step = 0;\n    saveSession();\n    return [{\n      json: {\n        action: 'prompt',\n        chat_id: chatId,\n        channel: 'telegram',\n        reply_text: prompts[0]\n      }\n    }];\n}\n"
+        "jsCode": "const tgMessage = $json.message ?? $json.edited_message ?? $json;\nconst chatId = String(tgMessage?.chat?.id ?? tgMessage?.from?.id ?? '').trim();\nconst text = String(tgMessage?.text ?? tgMessage?.caption ?? '').trim();\nconst firstName = String(tgMessage?.from?.first_name ?? '').trim();\nconst languageCode = String(tgMessage?.from?.language_code ?? '').trim() || null;\n\nreturn [{\n  json: {\n    chat_id: chatId,\n    message: text,\n    channel: 'telegram',\n    user_name: firstName || null,\n    preferred_language: languageCode,\n    phone_number: null,\n    facility_location: null\n  }\n}];"
       },
-      "id": "d1f4c7a1-0002-4c3a-9f0b-000000000002",
-      "name": "Manage Intake Session",
+      "id": "normalize-input",
+      "name": "Normalize Input",
       "type": "n8n-nodes-base.code",
       "typeVersion": 2,
       "position": [
@@ -30,128 +32,37 @@
     },
     {
       "parameters": {
-        "conditions": {
-          "conditions": [
-            {
-              "id": "d1f4c7a1-0003-a",
-              "leftValue": "={{ $json.action }}",
-              "rightValue": "finalize",
-              "operator": {
-                "type": "string",
-                "operation": "equal"
-              }
-            }
-          ]
+        "method": "POST",
+        "url": "https://medical-triage-j8fm.onrender.com/chatbot/telegram",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ $json }}",
+        "options": {
+          "timeout": 300000
         }
       },
-      "id": "d1f4c7a1-0003-4c3a-9f0b-000000000003",
-      "name": "Intake Complete?",
-      "type": "n8n-nodes-base.if",
-      "typeVersion": 2,
+      "id": "call-backend",
+      "name": "Call Chatbot Backend",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
       "position": [
-        760,
+        790,
         300
       ]
     },
     {
       "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
         "chatId": "={{ $json.chat_id }}",
         "text": "={{ $json.reply_text }}",
         "additionalFields": {}
       },
-      "id": "d1f4c7a1-0004-4c3a-9f0b-000000000004",
-      "name": "Telegram Prompt",
+      "id": "send-reply",
+      "name": "Telegram Reply",
       "type": "n8n-nodes-base.telegram",
       "typeVersion": 1.2,
       "position": [
-        1020,
-        460
-      ]
-    },
-    {
-      "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
-        "chatId": "={{ $json.chat_id }}",
-        "text": "={{ $json.reply_text }}",
-        "additionalFields": {}
-      },
-      "id": "d1f4c7a1-0005-4c3a-9f0b-000000000005",
-      "name": "Telegram Processing",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        1020,
-        120
-      ]
-    },
-    {
-      "parameters": {
-        "method": "POST",
-        "url": "={{ $env.TRIAGE_API_URL || 'https://medical-triage-j8fm.onrender.com/triage' }}",
-        "sendBody": true,
-        "specifyBody": "json",
-        "jsonBody": "={{ $('Manage Intake Session').item.json.triage_payload }}",
-        "options": {
-          "timeout": 300000
-        }
-      },
-      "id": "d1f4c7a1-0006-4c3a-9f0b-000000000006",
-      "name": "Call FastAPI",
-      "type": "n8n-nodes-base.httpRequest",
-      "typeVersion": 4,
-      "position": [
-        1260,
-        120
-      ]
-    },
-    {
-      "parameters": {
-        "jsCode": "const r = $json;\nconst mode = String(r.user_mode ?? 'patient');\nconst urgency = String(r.urgency_level ?? 'standard').toLowerCase();\nconst score = r.urgency_score ?? '?';\nconst ticket = r.ticket_id ?? 'N/A';\nconst report = r.triage_report ?? {};\nconst diff = Array.isArray(r.differential) && r.differential.length ? r.differential.slice(0, 3).join(', ') : 'Not available';\nconst actionMap = {\n  emergency: 'Go to A&E immediately. Call 112 now.',\n  urgent: 'See a doctor within 24 hours.',\n  standard: 'Book a clinic appointment this week.',\n  'self-care': 'Manage at home with the guidance below.'\n};\n\nconst summary = [\n  'TRIAGE COMPLETE',\n  '',\n  `Ref: ${ticket}`,\n  `Urgency: ${urgency.toUpperCase()} (${score}/10)`,\n  `Likely causes: ${diff}`,\n  `ACTION: ${actionMap[urgency] || 'See a doctor.'}`,\n  '',\n  'DISCLAIMER: This is not a substitute for professional medical advice.'\n].join('\\n');\n\nconst reportText = mode === 'clinician'\n  ? String(report.clinician_report ?? report.patient_report ?? 'Report unavailable')\n  : String(report.patient_report ?? report.emergency_response ?? 'Report unavailable');\n\nconst nutrition = urgency === 'self-care' && r.nutrition_advice\n  ? `\\n\\nNIGERIAN NUTRITION ADVICE:\\n${r.nutrition_advice}`\n  : '';\n\nconst progress = urgency === 'self-care'\n  ? '\\n\\nPROGRESS CHECK: You will receive a check-in message in 24 hours.'\n  : '';\n\nconst disclaimer = '\\n\\nDISCLAIMER: This is not a substitute for professional medical advice. Always consult a qualified healthcare provider.';\n\nreturn [{\n  json: {\n    chat_id: r.chat_id ?? '',\n    summary,\n    report_text: `${reportText}${nutrition}${progress}${disclaimer}`,\n    ticket_id: ticket,\n    urgency_level: urgency,\n    response_status: r.status ?? 'complete'\n  }\n}];"
-      },
-      "id": "d1f4c7a1-0007-4c3a-9f0b-000000000007",
-      "name": "Prepare Delivery",
-      "type": "n8n-nodes-base.code",
-      "typeVersion": 2,
-      "position": [
-        1500,
-        120
-      ]
-    },
-    {
-      "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
-        "chatId": "={{ $json.chat_id }}",
-        "text": "={{ $json.summary }}",
-        "additionalFields": {}
-      },
-      "id": "d1f4c7a1-0008-4c3a-9f0b-000000000008",
-      "name": "Telegram Summary",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        1740,
-        120
-      ]
-    },
-    {
-      "parameters": {
-        "resource": "message",
-        "operation": "sendMessage",
-        "chatId": "={{ $json.chat_id }}",
-        "text": "={{ $json.report_text }}",
-        "additionalFields": {}
-      },
-      "id": "d1f4c7a1-0009-4c3a-9f0b-000000000009",
-      "name": "Telegram Full Report",
-      "type": "n8n-nodes-base.telegram",
-      "typeVersion": 1.2,
-      "position": [
-        1980,
-        120
+        1050,
+        300
       ]
     }
   ],
@@ -160,80 +71,29 @@
       "main": [
         [
           {
-            "node": "Manage Intake Session",
+            "node": "Normalize Input",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Manage Intake Session": {
+    "Normalize Input": {
       "main": [
         [
           {
-            "node": "Intake Complete?",
+            "node": "Call Chatbot Backend",
             "type": "main",
             "index": 0
           }
         ]
       ]
     },
-    "Intake Complete?": {
+    "Call Chatbot Backend": {
       "main": [
         [
           {
-            "node": "Telegram Processing",
-            "type": "main",
-            "index": 0
-          }
-        ],
-        [
-          {
-            "node": "Telegram Prompt",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Telegram Processing": {
-      "main": [
-        [
-          {
-            "node": "Call FastAPI",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Call FastAPI": {
-      "main": [
-        [
-          {
-            "node": "Prepare Delivery",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Prepare Delivery": {
-      "main": [
-        [
-          {
-            "node": "Telegram Summary",
-            "type": "main",
-            "index": 0
-          }
-        ]
-      ]
-    },
-    "Telegram Summary": {
-      "main": [
-        [
-          {
-            "node": "Telegram Full Report",
+            "node": "Telegram Reply",
             "type": "main",
             "index": 0
           }

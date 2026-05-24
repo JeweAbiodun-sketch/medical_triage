@@ -1,7 +1,7 @@
 """
 medical_agent_server.py
 FastAPI server wrapping the full Medical Triage LangGraph pipeline.
-n8n calls this via HTTP POST /triage
+n8n can call this via HTTP POST /triage or POST /chatbot/telegram
 
 Run with:
     python medical_agent_server.py
@@ -14,12 +14,12 @@ Test with:
 
 import os, json, time, uuid, re, sys, requests, difflib
 from datetime import datetime, timezone
-from typing import Optional, List, Dict, TypedDict
+from typing import Any, Optional, List, Dict, TypedDict
 from dotenv import load_dotenv
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 import uvicorn
 from openai import OpenAI
 from pinecone import Pinecone
@@ -52,10 +52,32 @@ PINECONE_INDEX_NAME = "medical-triage-agent"
 EMBED_MODEL         = "text-embedding-3-small"
 RESEARCH_MODEL      = "gpt-4o-mini"
 REPORT_MODEL        = "gpt-4o"
+CHATBOT_MODEL       = os.getenv("CHATBOT_MODEL", "gpt-5.4-mini")
 PUBMED_BASE_URL     = "https://eutils.ncbi.nlm.nih.gov/entrez/eutils"
 SMS_API_URL         = os.getenv("SMS_API_URL", "")
 SMS_API_KEY         = os.getenv("SMS_API_KEY", "")
 SMS_SENDER_ID       = os.getenv("SMS_SENDER_ID", "TriageAI")
+CHATBOT_SESSION_TTL = int(os.getenv("CHATBOT_SESSION_TTL", "86400"))
+CHATBOT_MAX_HISTORY  = int(os.getenv("CHATBOT_MAX_HISTORY", "12"))
+CHATBOT_SESSIONS: Dict[str, Dict[str, Any]] = {}
+
+CHATBOT_REQUIRED_FIELDS = [
+    "symptoms",
+    "duration",
+    "severity",
+    "age",
+    "red_flags",
+    "location",
+]
+
+CHATBOT_QUESTION_BANK = {
+    "symptoms": "What symptoms are you having?",
+    "duration": "How long has this been happening?",
+    "severity": "How severe is it from 1 to 10?",
+    "age": "What is your age?",
+    "red_flags": "Any chest pain, trouble breathing, fainting, seizures, vomiting blood, or heavy bleeding?",
+    "location": "What city or area are you in?",
+}
 
 LANGUAGE_KEYWORDS = {
     "hausa": [
@@ -431,6 +453,283 @@ def extract_symptoms(msg: str) -> dict:
 def detect_red_flags(msg: str) -> List[str]:
     m = msg.lower()
     return [f"{cat}: {kw}" for cat, kws in RED_FLAG_SYMPTOMS.items() for kw in kws if kw in m][:3]
+
+def _now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+def _default_chatbot_state(chat_id: str, channel: str = "telegram", user_name: Optional[str] = None,
+                           preferred_language: Optional[str] = None,
+                           phone_number: Optional[str] = None,
+                           facility_location: Optional[str] = None) -> Dict[str, Any]:
+    return {
+        "session_id": str(uuid.uuid4()),
+        "chat_id": chat_id,
+        "channel": channel,
+        "user_name": user_name,
+        "preferred_language": preferred_language,
+        "phone_number": phone_number,
+        "facility_location": facility_location,
+        "intake": {
+            "symptoms": None,
+            "duration": None,
+            "severity": None,
+            "age": None,
+            "red_flags": None,
+            "location": facility_location,
+            "medications": None,
+            "allergies": None,
+        },
+        "messages": [],
+        "stage": "collecting",
+        "ready_for_triage": False,
+        "triage_result": None,
+        "created_at": _now_iso(),
+        "updated_at": _now_iso(),
+        "turn_count": 0,
+    }
+
+def _get_chatbot_session(chat_id: str, request: Optional[ChatbotRequest] = None) -> Dict[str, Any]:
+    session = CHATBOT_SESSIONS.get(chat_id)
+    if session:
+        age_seconds = (datetime.now(timezone.utc) - datetime.fromisoformat(session["updated_at"])).total_seconds()
+        if age_seconds > CHATBOT_SESSION_TTL:
+            session = None
+    if not session:
+        session = _default_chatbot_state(
+            chat_id=chat_id,
+            channel=getattr(request, "channel", "telegram"),
+            user_name=getattr(request, "user_name", None),
+            preferred_language=getattr(request, "preferred_language", None),
+            phone_number=getattr(request, "phone_number", None),
+            facility_location=getattr(request, "facility_location", None),
+        )
+        CHATBOT_SESSIONS[chat_id] = session
+    return session
+
+def _save_chatbot_session(chat_id: str, session: Dict[str, Any]) -> None:
+    session["updated_at"] = _now_iso()
+    CHATBOT_SESSIONS[chat_id] = session
+
+def _trim_chatbot_history(messages: List[Dict[str, str]]) -> List[Dict[str, str]]:
+    return messages[-CHATBOT_MAX_HISTORY:]
+
+def _extract_chatbot_clues(message: str, session: Dict[str, Any]) -> Dict[str, Any]:
+    text = message.strip()
+    lower = text.lower()
+    clues: Dict[str, Any] = {}
+    symptom_info = extract_symptoms(text)
+    if symptom_info.get("symptoms"):
+        clues["symptoms"] = ", ".join(symptom_info["symptoms"][:6])
+    if symptom_info.get("duration"):
+        clues["duration"] = symptom_info["duration"]
+    age = symptom_info.get("age")
+    if age:
+        clues["age"] = re.sub(r"\D+", "", str(age)) or age
+
+    severity_match = re.search(r"(\d{1,2})(?:\s*/\s*10|\s*out of\s*10|\s*of\s*10)?", lower)
+    if severity_match:
+        severity = int(severity_match.group(1))
+        if 0 <= severity <= 10:
+            clues["severity"] = severity
+
+    red_flags = detect_red_flags(text)
+    if red_flags:
+        clues["red_flags"] = red_flags
+    elif any(term in lower for term in ["no", "none", "not really", "nothing"]):
+        clues["red_flags"] = []
+
+    if not clues.get("location") and session.get("facility_location"):
+        clues["location"] = session.get("facility_location")
+    location_match = re.search(
+        r"(?:i(?:'| a)?m in|in|at|from|live in|based in)\s+([A-Za-z][A-Za-z\s\-']{1,40})",
+        text,
+        re.IGNORECASE,
+    )
+    if location_match:
+        clues["location"] = location_match.group(1).strip(" .,!?:;")
+
+    if "medications" not in clues and any(term in lower for term in ["paracetamol", "ibuprofen", "amoxicillin", "metformin", "insulin"]):
+        clues["medications"] = text
+
+    if "allergies" not in clues and "allerg" in lower:
+        clues["allergies"] = text
+
+    return clues
+
+def _merge_intake(existing: Dict[str, Any], updates: Dict[str, Any]) -> Dict[str, Any]:
+    merged = dict(existing)
+    for key, value in updates.items():
+        if value in (None, "", [], {}):
+            continue
+        if key == "symptoms" and isinstance(value, list):
+            value = ", ".join(str(v).strip() for v in value if str(v).strip())
+        if key == "age":
+            try:
+                value = int(re.sub(r"\D+", "", str(value)))
+            except Exception:
+                pass
+        if key == "severity":
+            try:
+                value = int(re.sub(r"\D+", "", str(value)))
+            except Exception:
+                pass
+        if key == "red_flags" and isinstance(value, str):
+            value = [value]
+        merged[key] = value
+    return merged
+
+def _missing_chatbot_fields(intake: Dict[str, Any]) -> List[str]:
+    missing = []
+    for field in CHATBOT_REQUIRED_FIELDS:
+        value = intake.get(field)
+        if value is None:
+            missing.append(field)
+            continue
+        if field == "red_flags":
+            continue
+        if isinstance(value, str) and not value.strip():
+            missing.append(field)
+        elif isinstance(value, (list, dict)) and not value:
+            missing.append(field)
+    return missing
+
+def _question_for_field(field: str) -> str:
+    return CHATBOT_QUESTION_BANK.get(field, "Could you tell me a bit more?")
+
+def _build_chatbot_prompt(session: Dict[str, Any], latest_message: str, intake: Dict[str, Any], missing_fields: List[str]) -> List[Dict[str, str]]:
+    recent_turns = session.get("messages", [])[-CHATBOT_MAX_HISTORY:]
+    memory_lines = []
+    for idx, msg in enumerate(recent_turns[-8:], 1):
+        role = msg.get("role", "user")
+        content = msg.get("content", "")
+        memory_lines.append(f"{idx}. {role.upper()}: {content}")
+
+    system_prompt = (
+        "You are an interactive medical triage chatbot for Nigerian patients.\n"
+        "Your job is to collect missing intake details one question at a time using a warm, concise style.\n"
+        "You must remember the existing intake and avoid asking for fields the user already answered.\n"
+        "Always reply in JSON only with these keys:\n"
+        "{"
+        "\"reply_text\": string, "
+        "\"updates\": object, "
+        "\"ready_for_triage\": boolean, "
+        "\"next_field\": string, "
+        "\"tool_action\": \"collect\"|\"finalize\", "
+        "\"urgency_hint\": \"low\"|\"medium\"|\"high\"|\"emergency\", "
+        "\"reason\": string"
+        "}\n"
+        "If all key details are collected, set ready_for_triage=true and tool_action=finalize.\n"
+        "Key fields to collect are symptoms, duration, severity, age, red_flags, and location.\n"
+        "If red flags suggest immediate danger, be direct and set urgency_hint=emergency.\n"
+        "If the user answered multiple questions in one message, extract them into updates.\n"
+        "Do not mention policies or hidden reasoning."
+    )
+
+    user_prompt = {
+        "latest_message": latest_message,
+        "current_intake": intake,
+        "missing_fields": missing_fields,
+        "session_memory": memory_lines,
+        "preferred_language": session.get("preferred_language") or "english",
+    }
+
+    return [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(user_prompt, ensure_ascii=False)},
+    ]
+
+def _safe_json_loads(payload: str) -> Dict[str, Any]:
+    try:
+        return json.loads(payload)
+    except Exception:
+        match = re.search(r"\{.*\}", payload, re.DOTALL)
+        if match:
+            return json.loads(match.group(0))
+        raise
+
+def _llm_chatbot_step(session: Dict[str, Any], latest_message: str, intake: Dict[str, Any], missing_fields: List[str]) -> Dict[str, Any]:
+    messages = _build_chatbot_prompt(session, latest_message, intake, missing_fields)
+    for attempt in range(3):
+        try:
+            resp = openai_client.chat.completions.create(
+                model=CHATBOT_MODEL,
+                messages=messages,
+                response_format={"type": "json_object"},
+                temperature=0.2,
+            )
+            content = resp.choices[0].message.content or "{}"
+            data = _safe_json_loads(content)
+            if not isinstance(data, dict):
+                raise ValueError("Chatbot response was not a JSON object")
+            return data
+        except Exception as e:
+            if attempt == 2:
+                raise
+            time.sleep(2 ** attempt)
+
+def _compose_triage_message_from_intake(session: Dict[str, Any]) -> str:
+    intake = session.get("intake", {})
+    parts = [
+        f"Symptoms: {intake.get('symptoms')}",
+        f"Duration: {intake.get('duration')}",
+        f"Severity: {intake.get('severity')}",
+        f"Age: {intake.get('age')}",
+        f"Red flags: {intake.get('red_flags')}",
+        f"Location: {intake.get('location')}",
+        f"User name: {session.get('user_name')}",
+    ]
+    return "Interactive chatbot intake summary:\n" + "\n".join(parts)
+
+def execute_triage_request(request: "TriageRequest") -> "TriageResponse":
+    if not request.message.strip():
+        raise HTTPException(status_code=400, detail="message is required")
+
+    print(f"\n{'='*55}")
+    print(f"  NEW TRIAGE: {request.message[:60]}")
+    print(f"  Channel   : {request.channel} | Chat: {request.chat_id}")
+    print(f"{'='*55}")
+
+    initial_state = MedicalAgentState(
+        session_id=str(uuid.uuid4()), ticket_id="", initiated_at="",
+        channel=request.channel, chat_id=request.chat_id,
+        phone_number=request.phone_number,
+        user_mode="patient", raw_message=request.message, corrected_message=None,
+        preferred_language=request.preferred_language,
+        detected_language=None,
+        facility_location=request.facility_location,
+        facility_recommendation=None,
+        offline_mode=request.offline_mode,
+        symptoms=[], duration=None, age=None, medications=[],
+        status="pending", errors=[],
+        raw_research=None, research_chunks=None, pinecone_ids=None,
+        retrieved_chunks=None, reranked_chunks=None,
+        urgency_level=None, urgency_score=None,
+        differential=None, red_flags=None, retry_count=0,
+        triage_report=None, nutrition_advice=None,
+        home_remedies=None, follow_up_sent=False,
+        report_ready=False, workflow_path=[]
+    )
+
+    result = pipeline.invoke(initial_state)
+    print(f"\n✅ COMPLETE: {result['status']} | {result.get('urgency_level')} | {result.get('urgency_score')}/10")
+
+    return TriageResponse(
+        chat_id         = request.chat_id,
+        ticket_id       = result.get("ticket_id", ""),
+        status          = result.get("status", ""),
+        user_mode       = result.get("user_mode", "patient"),
+        detected_language = result.get("detected_language"),
+        urgency_level   = result.get("urgency_level"),
+        urgency_score   = result.get("urgency_score"),
+        differential    = result.get("differential"),
+        report_ready    = result.get("report_ready", False),
+        triage_report   = result.get("triage_report"),
+        nutrition_advice= result.get("nutrition_advice"),
+        facility_recommendation = result.get("facility_recommendation"),
+        offline_mode    = result.get("offline_mode", False),
+        errors          = result.get("errors", []),
+        workflow_path   = result.get("workflow_path", [])
+    )
 
 def get_nutrition_advice(symptoms: List[str], differential: List[str]) -> str:
     all_text = " ".join(symptoms + differential).lower()
@@ -1025,60 +1324,123 @@ class TriageResponse(BaseModel):
     workflow_path:  List[str]
 
 
+class ChatbotRequest(BaseModel):
+    chat_id: str
+    message: str
+    channel: str = "telegram"
+    user_name: Optional[str] = None
+    preferred_language: Optional[str] = None
+    phone_number: Optional[str] = None
+    facility_location: Optional[str] = None
+
+
+class ChatbotResponse(BaseModel):
+    chat_id: str
+    session_id: str
+    status: str
+    reply_text: str
+    stage: str
+    intake: Dict[str, Any]
+    ready_for_triage: bool
+    triage_result: Optional[TriageResponse] = None
+    tool_used: Optional[str] = None
+    errors: List[str] = Field(default_factory=list)
+
+
 @app.get("/health")
 def health():
     return {"status": "ok", "service": "Medical Triage Agent", "pipeline": "ready"}
 
 @app.post("/triage", response_model=TriageResponse)
 def run_triage(request: TriageRequest):
+    return execute_triage_request(request)
+
+
+@app.post("/chatbot/telegram", response_model=ChatbotResponse)
+def chatbot_telegram(request: ChatbotRequest):
+    if not request.chat_id.strip():
+        raise HTTPException(status_code=400, detail="chat_id is required")
     if not request.message.strip():
         raise HTTPException(status_code=400, detail="message is required")
 
-    print(f"\n{'='*55}")
-    print(f"  NEW TRIAGE: {request.message[:60]}")
-    print(f"  Channel   : {request.channel} | Chat: {request.chat_id}")
-    print(f"{'='*55}")
+    session = _get_chatbot_session(request.chat_id, request)
+    session["turn_count"] = int(session.get("turn_count", 0)) + 1
+    session["channel"] = request.channel or session.get("channel") or "telegram"
+    session["user_name"] = request.user_name or session.get("user_name")
+    session["preferred_language"] = request.preferred_language or session.get("preferred_language")
+    session["phone_number"] = request.phone_number or session.get("phone_number")
+    session["facility_location"] = request.facility_location or session.get("facility_location")
 
-    initial_state = MedicalAgentState(
-        session_id=str(uuid.uuid4()), ticket_id="", initiated_at="",
-        channel=request.channel, chat_id=request.chat_id,
-        phone_number=request.phone_number,
-        user_mode="patient", raw_message=request.message, corrected_message=None,
-        preferred_language=request.preferred_language,
-        detected_language=None,
-        facility_location=request.facility_location,
-        facility_recommendation=None,
-        offline_mode=request.offline_mode,
-        symptoms=[], duration=None, age=None, medications=[],
-        status="pending", errors=[],
-        raw_research=None, research_chunks=None, pinecone_ids=None,
-        retrieved_chunks=None, reranked_chunks=None,
-        urgency_level=None, urgency_score=None,
-        differential=None, red_flags=None, retry_count=0,
-        triage_report=None, nutrition_advice=None,
-        home_remedies=None, follow_up_sent=False,
-        report_ready=False, workflow_path=[]
-    )
+    user_text = request.message.strip()
+    session.setdefault("messages", []).append({"role": "user", "content": user_text})
+    session["messages"] = _trim_chatbot_history(session["messages"])
 
-    result = pipeline.invoke(initial_state)
-    print(f"\n✅ COMPLETE: {result['status']} | {result.get('urgency_level')} | {result.get('urgency_score')}/10")
+    local_updates = _extract_chatbot_clues(user_text, session)
+    merged_intake = _merge_intake(session.get("intake", {}), local_updates)
+    missing_fields = _missing_chatbot_fields(merged_intake)
+    llm_step = _llm_chatbot_step(session, user_text, merged_intake, missing_fields)
+    llm_updates = llm_step.get("updates", {})
+    if not isinstance(llm_updates, dict):
+        llm_updates = {}
+    merged_intake = _merge_intake(merged_intake, llm_updates)
+    missing_fields = _missing_chatbot_fields(merged_intake)
 
-    return TriageResponse(
-        chat_id         = request.chat_id,
-        ticket_id       = result.get("ticket_id", ""),
-        status          = result.get("status", ""),
-        user_mode       = result.get("user_mode", "patient"),
-        detected_language = result.get("detected_language"),
-        urgency_level   = result.get("urgency_level"),
-        urgency_score   = result.get("urgency_score"),
-        differential    = result.get("differential"),
-        report_ready    = result.get("report_ready", False),
-        triage_report   = result.get("triage_report"),
-        nutrition_advice= result.get("nutrition_advice"),
-        facility_recommendation = result.get("facility_recommendation"),
-        offline_mode    = result.get("offline_mode", False),
-        errors          = result.get("errors", []),
-        workflow_path   = result.get("workflow_path", [])
+    session["intake"] = merged_intake
+    session["stage"] = "ready" if llm_step.get("ready_for_triage") or not missing_fields else "collecting"
+    session["ready_for_triage"] = session["stage"] == "ready"
+
+    reply_text = str(llm_step.get("reply_text") or "").strip()
+    next_field = str(llm_step.get("next_field") or "").strip()
+    tool_used = "conversation"
+
+    if not reply_text:
+        if missing_fields:
+            reply_text = _question_for_field(missing_fields[0])
+        else:
+            reply_text = "Thanks. I have everything I need to run the triage now."
+
+    triage_result = None
+    if session["ready_for_triage"]:
+        tool_used = "triage_pipeline"
+        triage_request = TriageRequest(
+            message=_compose_triage_message_from_intake(session),
+            channel=session.get("channel", "telegram"),
+            chat_id=request.chat_id,
+            phone_number=session.get("phone_number"),
+            preferred_language=session.get("preferred_language"),
+            facility_location=session.get("facility_location"),
+            offline_mode=False,
+        )
+        triage_result = execute_triage_request(triage_request)
+        session["triage_result"] = triage_result.model_dump()
+        reply_text = (
+            f"{reply_text}\n\n"
+            f"Triage complete.\n"
+            f"Urgency: {triage_result.urgency_level or 'unknown'}\n"
+            f"Ref: {triage_result.ticket_id}"
+        )
+        if triage_result.triage_report:
+            patient_report = triage_result.triage_report.get("patient_report") or triage_result.triage_report.get("emergency_response")
+            if patient_report:
+                short_report = patient_report.strip()
+                if len(short_report) > 1200:
+                    short_report = short_report[:1200].rstrip() + "..."
+                reply_text = f"{reply_text}\n\n{short_report}"
+
+    session.setdefault("messages", []).append({"role": "assistant", "content": reply_text})
+    session["messages"] = _trim_chatbot_history(session["messages"])
+    _save_chatbot_session(request.chat_id, session)
+
+    return ChatbotResponse(
+        chat_id=request.chat_id,
+        session_id=session["session_id"],
+        status="complete" if triage_result else "collecting",
+        reply_text=reply_text,
+        stage=session["stage"],
+        intake=session["intake"],
+        ready_for_triage=session["ready_for_triage"],
+        triage_result=triage_result,
+        tool_used=tool_used,
     )
 
 

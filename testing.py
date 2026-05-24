@@ -13,6 +13,7 @@ payload = {
     "message": "I have fever and headache for 3 days",
     "channel": "telegram",
     "chat_id": "8138298582",
+    "user_name": "Abiodun",
     "phone_number": None,
     "preferred_language": None,
     "facility_location": None,
@@ -29,13 +30,15 @@ def get_target() -> str:
 def get_url(target: str) -> str:
     if target == "render":
         return os.getenv("TRIAGE_API_URL", "").strip()
+    if target == "chatbot":
+        return os.getenv("CHATBOT_API_URL", "").strip()
     return os.getenv("N8N_WEBHOOK_URL", "").strip()
 
 
 def main() -> int:
     target = get_target()
-    if target not in {"n8n", "render"}:
-        print("Usage: python testing.py [n8n|render]")
+    if target not in {"n8n", "render", "chatbot"}:
+        print("Usage: python testing.py [n8n|render|chatbot]")
         return 1
 
     url = get_url(target)
@@ -44,10 +47,14 @@ def main() -> int:
             print("Missing N8N_WEBHOOK_URL in .env")
             print("Example:")
             print("  N8N_WEBHOOK_URL=https://adetu-o.n8n.irn.hk/webhook-test/medical-triage")
-        else:
+        elif target == "render":
             print("Missing TRIAGE_API_URL in .env")
             print("Example:")
             print("  TRIAGE_API_URL=https://medical-triage-j8fm.onrender.com/triage")
+        else:
+            print("Missing CHATBOT_API_URL in .env")
+            print("Example:")
+            print("  CHATBOT_API_URL=https://medical-triage-j8fm.onrender.com/chatbot/telegram")
         return 1
 
     print(f"Target: {target}")
