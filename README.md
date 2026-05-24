@@ -28,8 +28,10 @@ It is designed for:
 
 ## n8n Workflow
 - [n8n/medical_triage_intake.json](./n8n/medical_triage_intake.json)
+- [n8n/telegram_chatbot_intake.json](./n8n/telegram_chatbot_intake.json)
 
 Import this workflow into n8n to receive a triage request, normalize the payload, call the FastAPI service, and return the structured triage response.
+Use the Telegram workflow for interactive intake that collects symptoms step by step before calling the triage API.
 
 ## Run the Server
 Create and activate a virtual environment if you do not already have one:
@@ -118,8 +120,8 @@ Optional:
 ## n8n Setup
 1. Start the FastAPI server locally.
 2. Set `TRIAGE_API_URL` in n8n if needed.
-3. Import `n8n/medical_triage_intake.json`.
-4. Activate the workflow and send a POST request to the webhook path.
+3. Import `n8n/medical_triage_intake.json` for webhook intake or `n8n/telegram_chatbot_intake.json` for the interactive chatbot.
+4. Activate the workflow and send a POST request or Telegram message depending on the workflow you imported.
 
 ## Testing Helper
 Use `testing.py` to smoke-test either endpoint:

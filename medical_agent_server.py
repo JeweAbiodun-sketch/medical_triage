@@ -1008,6 +1008,7 @@ class TriageRequest(BaseModel):
     offline_mode: bool = False
 
 class TriageResponse(BaseModel):
+    chat_id:        Optional[str]
     ticket_id:      str
     status:         str
     user_mode:      str
@@ -1063,6 +1064,7 @@ def run_triage(request: TriageRequest):
     print(f"\n✅ COMPLETE: {result['status']} | {result.get('urgency_level')} | {result.get('urgency_score')}/10")
 
     return TriageResponse(
+        chat_id         = request.chat_id,
         ticket_id       = result.get("ticket_id", ""),
         status          = result.get("status", ""),
         user_mode       = result.get("user_mode", "patient"),
